@@ -443,14 +443,6 @@ class ProjectsAndSprintsApiIntegrationTest {
 
 	// ---------------------------------------------------------------- velocity
 
-	/** Two statuses per item type (NEW, and DONE which is terminal), as the Phase 6 seed will provide. */
-	private static void seedWorkflow(Tenant tenant) {
-		for (String type : List.of("PBI", "BUG", "TASK")) {
-			tenant.execute("INSERT INTO WorkItemStatus (StatusCode, DisplayName, ItemType, SortOrder, IsTerminal) VALUES "
-					+ "('NEW', 'New', ?, 1, FALSE), ('DONE', 'Done', ?, 2, TRUE)", type, type);
-		}
-	}
-
 	private static void seedItem(Tenant tenant, UUID project, UUID sprint, int number, String type, String status, int points) {
 		tenant.execute("INSERT INTO WorkItem (WorkItemNumber, ProjectId, SprintId, Type, StatusId, Title, EffortPoints, CreatedBy) "
 				+ "SELECT ?, p.ProjectId, s.SprintId, ?, st.StatusId, 'Item', ?, u.UserId "
@@ -465,7 +457,6 @@ class ProjectsAndSprintsApiIntegrationTest {
 		Caller owner = owner(tenant, 5);
 		UUID project = newProject(owner, "Web App Rewrite");
 		UUID sprint = newSprint(owner, project, "S1", "2026-10-05");
-		seedWorkflow(tenant);
 		seedItem(tenant, project, sprint, 1000, "PBI", "NEW", 5);
 		seedItem(tenant, project, sprint, 1001, "PBI", "DONE", 3);
 		seedItem(tenant, project, sprint, 1002, "BUG", "DONE", 2);
