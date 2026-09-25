@@ -14,6 +14,21 @@ public sealed interface SprintError extends ApplicationError {
 
 	}
 
+	/** Planning sprints (creating, changing, starting, closing) is for organization owners and admins. */
+	record NotAllowed() implements SprintError {
+
+		@Override
+		public String code() {
+			return "FORBIDDEN";
+		}
+
+		@Override
+		public String message() {
+			return "Only an owner or an admin can plan sprints.";
+		}
+
+	}
+
 	record ProjectNotFound() implements SprintError {
 
 		@Override

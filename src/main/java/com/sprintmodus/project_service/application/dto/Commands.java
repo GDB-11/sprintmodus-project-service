@@ -20,7 +20,7 @@ public final class Commands {
 	}
 
 	/** {@code startDate} and {@code plannedVelocity} left {@code null} keep their current value. */
-	public record UpdateSprint(UUID sprintCode, String name, LocalDate startDate, Integer plannedVelocity) {
+	public record UpdateSprint(Actor actor, UUID sprintCode, String name, LocalDate startDate, Integer plannedVelocity) {
 	}
 
 	public record UpdateSprintConfig(Actor actor, Integer defaultSprintDays, DayOfWeek sprintStartDay,

@@ -85,6 +85,35 @@ interface SprintQueries extends Repository<SprintEntity, Long> {
 	int updateDetails(@Param("code") String code, @Param("name") String name, @Param("startDate") LocalDate startDate,
 			@Param("endDate") LocalDate endDate, @Param("plannedVelocity") int plannedVelocity);
 
+	/**
+	 * Day 0 of the burndown: the hours in the sprint on the eve of its first day, kept if it already exists (an early start
+	 * has been writing it). The hours are those of {@code SprintRemainingHours} (V1.11), and a sprint without any counts 0.
+	 */
+	@Modifying(clearAutomatically = true)
+	@Query(nativeQuery = true, value = """
+			INSERT INTO BurndownData (SprintId, SnapshotDate, RemainingHours, IdealRemainingHours)
+			SELECT s.SprintId, DATE_SUB(s.StartDate, INTERVAL 1 DAY), COALESCE(r.RemainingHours, 0), COALESCE(r.RemainingHours, 0)
+			FROM Sprint s LEFT JOIN SprintRemainingHours r ON r.SprintId = s.SprintId
+			WHERE s.SprintCode = UUID_TO_BIN(:code) AND s.IsActive = TRUE
+			ON DUPLICATE KEY UPDATE BurndownData.SprintId = BurndownData.SprintId
+			""")
+	int insertBurndownBaseline(@Param("code") String code);
+
+	/**
+	 * Today's burndown snapshot of an ACTIVE sprint, as the {@code SprintBurndownToday} view (V1.11) describes it, replacing an
+	 * earlier one of the same day. workitem-service writes the same statement after every change to the hours; this one is
+	 * for the moments this service ends or begins a sprint. A sprint that is not active matches nothing.
+	 */
+	@Modifying(clearAutomatically = true)
+	@Query(nativeQuery = true, value = """
+			INSERT INTO BurndownData (SprintId, SnapshotDate, RemainingHours, IdealRemainingHours)
+			SELECT b.SprintId, b.SnapshotDate, b.RemainingHours, b.IdealRemainingHours
+			FROM SprintBurndownToday b JOIN Sprint s ON s.SprintId = b.SprintId
+			WHERE s.SprintCode = UUID_TO_BIN(:code)
+			ON DUPLICATE KEY UPDATE RemainingHours = VALUES(RemainingHours), IdealRemainingHours = VALUES(IdealRemainingHours)
+			""")
+	int snapshotBurndown(@Param("code") String code);
+
 	@Modifying(clearAutomatically = true)
 	@Query(nativeQuery = true, value = "UPDATE Sprint SET Status = 'ACTIVE' WHERE SprintCode = UUID_TO_BIN(:code) AND IsActive = TRUE AND Status = 'PLANNED'")
 	int start(@Param("code") String code);

@@ -104,6 +104,135 @@ class ProjectsAndSprintsApiIntegrationTest {
 		return UUID.fromString(read(createSprint(caller, project, name, start).andExpect(status().isCreated()), "$.sprintCode"));
 	}
 
+	// ---------------------------------------------------------------- burndown, velocity history, who plans
+
+	private static String today() {
+		return LocalDate.now(ZoneOffset.UTC).toString();
+	}
+
+	/** A task of a sprint with hours left, straight into the tenant's database (work items belong to workitem-service). */
+	private static void task(Tenant tenant, UUID sprint, int number, String hours, String status) {
+		tenant.execute("""
+				INSERT INTO WorkItem (WorkItemNumber, ProjectId, SprintId, Type, StatusId, Title, RemainingHours, CreatedBy)
+				SELECT ?, s.ProjectId, s.SprintId, 'TASK', st.StatusId, ?, ?, (SELECT UserId FROM `User` WHERE Email = ?)
+				FROM Sprint s, WorkItemStatus st
+				WHERE s.SprintCode = UUID_TO_BIN(?) AND st.ItemType = 'TASK' AND st.StatusCode = ?""",
+				number, "Task " + number, new java.math.BigDecimal(hours), tenant.owner().email(), sprint.toString(), status);
+	}
+
+	private static List<String> burndownRows(Tenant tenant, UUID sprint) {
+		return tenant.strings("""
+				SELECT CONCAT(b.SnapshotDate - INTERVAL DATEDIFF(s.StartDate, '2000-01-01') DAY, '|', b.RemainingHours, '|', b.IdealRemainingHours)
+				FROM BurndownData b JOIN Sprint s ON s.SprintId = b.SprintId WHERE s.SprintCode = UUID_TO_BIN(?) ORDER BY b.SnapshotDate""",
+				sprint.toString());
+	}
+
+	@Test
+	void startingASprintRecordsDayZeroAndTodayAndClosingItTakesTheLastSnapshotAndLocksIt() throws Exception {
+		Tenant tenant = TenantFixtures.newTenant();
+		Caller owner = owner(tenant, 5);
+		UUID project = newProject(owner, "Web App Rewrite");
+		UUID sprint = newSprint(owner, project, "S1", today()); // starts today, 14 days
+		task(tenant, sprint, 1000, "6", "NEW");
+		task(tenant, sprint, 1001, "4", "NEW");
+		task(tenant, sprint, 1002, "9", "DONE"); // done: nothing left
+
+		assertThat(burndownRows(tenant, sprint)).as("a planned sprint has no burndown").isEmpty();
+
+		send(post("/api/sprints/" + sprint + "/start"), owner, null).andExpect(status().isOk());
+		assertThat(tenant.strings("""
+				SELECT CONCAT(b.SnapshotDate = DATE_SUB(s.StartDate, INTERVAL 1 DAY), '/', b.RemainingHours, '/', b.IdealRemainingHours)
+				FROM BurndownData b JOIN Sprint s ON s.SprintId = b.SprintId ORDER BY b.SnapshotDate""")).as("day 0, then today (day 1 of 14)")
+				.containsExactly("1/10.00/10.00", "0/10.00/9.29");
+
+		tenant.execute("UPDATE WorkItem SET RemainingHours = 3 WHERE WorkItemNumber = 1000");
+		send(post("/api/sprints/" + sprint + "/close"), owner, null).andExpect(status().isNoContent());
+		assertThat(tenant.strings("SELECT b.RemainingHours FROM BurndownData b ORDER BY b.SnapshotDate")).as("the closing snapshot")
+				.containsExactly("10.00", "7.00");
+
+		tenant.execute("UPDATE WorkItem SET RemainingHours = 100 WHERE WorkItemNumber = 1000");
+		assertThat(tenant.string("SELECT COUNT(*) FROM SprintBurndownToday")).as("a closed sprint is never snapshotted again").isEqualTo("0");
+		send(get("/api/sprints/" + sprint + "/burndown"), owner, null).andExpect(status().isOk()).andExpect(jsonPath("$.status").value("CLOSED"))
+				.andExpect(jsonPath("$.points[0].remainingHours").value(10.0)).andExpect(jsonPath("$.points[1].remainingHours").value(7.0))
+				.andExpect(jsonPath("$.points[2].remainingHours").doesNotExist());
+	}
+
+	@Test
+	void aSprintStartedBeforeItsFirstDayKeepsWritingDayZero() throws Exception {
+		Tenant tenant = TenantFixtures.newTenant();
+		Caller owner = owner(tenant, 5);
+		UUID project = newProject(owner, "Web App Rewrite");
+		UUID sprint = newSprint(owner, project, "S1", LocalDate.now(ZoneOffset.UTC).plusDays(10).toString());
+		task(tenant, sprint, 1000, "8", "NEW");
+
+		send(post("/api/sprints/" + sprint + "/start"), owner, null).andExpect(status().isOk());
+
+		assertThat(tenant.strings("SELECT CONCAT(b.RemainingHours, '/', b.IdealRemainingHours) FROM BurndownData b"))
+				.as("one row, the eve of the first day: the scope the sprint will begin with").containsExactly("8.00/8.00");
+	}
+
+	@Test
+	void theBurndownEndpointReturnsDayZeroToTheLastDayWithTheIdealLineAndNothingForDaysThatHaveNotHappened() throws Exception {
+		Tenant tenant = TenantFixtures.newTenant();
+		Caller owner = owner(tenant, 5);
+		Caller member = member(tenant, 5);
+		UUID project = newProject(owner, "Web App Rewrite");
+		UUID sprint = newSprint(owner, project, "S1", LocalDate.now(ZoneOffset.UTC).minusDays(2).toString());
+		task(tenant, sprint, 1000, "14", "NEW");
+		send(post("/api/sprints/" + sprint + "/start"), owner, null).andExpect(status().isOk());
+
+		send(get("/api/sprints/" + sprint + "/burndown"), member, null).andExpect(status().isOk())
+				.andExpect(jsonPath("$.sprintCode").value(sprint.toString())).andExpect(jsonPath("$.sprintName").value("S1"))
+				.andExpect(jsonPath("$.status").value("ACTIVE")).andExpect(jsonPath("$.days").value(14))
+				.andExpect(jsonPath("$.baselineHours").value(14.0)).andExpect(jsonPath("$.points.length()").value(15))
+				.andExpect(jsonPath("$.points[0].day").value(0)).andExpect(jsonPath("$.points[0].idealRemainingHours").value(14.0))
+				.andExpect(jsonPath("$.points[0].remainingHours").value(14.0)).andExpect(jsonPath("$.points[14].idealRemainingHours").value(0.0))
+				.andExpect(jsonPath("$.points[3].remainingHours").value(14.0)) // today is day 3: carried forward from the start
+				.andExpect(jsonPath("$.points[4].remainingHours").doesNotExist())
+				.andExpect(jsonPath("$.points[1].date").value(LocalDate.now(ZoneOffset.UTC).minusDays(2).toString()));
+		send(get("/api/sprints/" + UUID.randomUUID() + "/burndown"), member, null).andExpect(status().isNotFound());
+	}
+
+	@Test
+	void theVelocityHistoryListsTheLastClosedSprintsOldestFirstWithTheirAverage() throws Exception {
+		Tenant tenant = TenantFixtures.newTenant();
+		Caller owner = owner(tenant, 5);
+		Caller member = member(tenant, 5);
+		UUID project = newProject(owner, "Web App Rewrite");
+		int[] velocities = { 10, 20, 30, 40 };
+		String[] starts = { "2026-01-05", "2026-01-19", "2026-02-02", "2026-02-16" };
+		for (int i = 0; i < 4; i++) {
+			UUID sprint = newSprint(owner, project, "S" + (i + 1), starts[i]);
+			tenant.execute("UPDATE Sprint SET Status = 'CLOSED', Velocity = ? WHERE SprintCode = UUID_TO_BIN(?)", velocities[i], sprint.toString());
+		}
+		newSprint(owner, project, "Next", "2026-03-30"); // planned: not part of it
+
+		send(get("/api/sprints/velocity-history?projectCode=" + project + "&limit=3"), member, null).andExpect(status().isOk())
+				.andExpect(jsonPath("$.projectCode").value(project.toString())).andExpect(jsonPath("$.sprints.length()").value(3))
+				.andExpect(jsonPath("$.sprints[0].name").value("S2")).andExpect(jsonPath("$.sprints[2].velocity").value(40))
+				.andExpect(jsonPath("$.averageVelocity").value(30.0));
+		send(get("/api/sprints/velocity-history?projectCode=" + project), member, null).andExpect(jsonPath("$.sprints.length()").value(4));
+		send(get("/api/sprints/velocity-history?projectCode=" + project + "&limit=0"), member, null).andExpect(status().isBadRequest());
+		send(get("/api/sprints/velocity-history?projectCode=" + UUID.randomUUID()), member, null).andExpect(status().isNotFound());
+	}
+
+	@Test
+	void onlyOwnersAndAdminsPlanSprintsButEveryoneReadsThem() throws Exception {
+		Tenant tenant = TenantFixtures.newTenant();
+		Caller owner = owner(tenant, 5);
+		Caller member = member(tenant, 5);
+		UUID project = newProject(member, "Web App Rewrite");
+		UUID sprint = newSprint(owner, project, "S1", "2026-10-05");
+
+		createSprint(member, project, "Mine", "2026-11-02").andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("FORBIDDEN"));
+		send(put("/api/sprints/" + sprint), member, "{\"name\":\"Renamed\"}").andExpect(status().isForbidden());
+		send(post("/api/sprints/" + sprint + "/start"), member, null).andExpect(status().isForbidden());
+		send(post("/api/sprints/" + sprint + "/close"), member, null).andExpect(status().isForbidden());
+		send(get("/api/sprints/" + sprint), member, null).andExpect(status().isOk()).andExpect(jsonPath("$.name").value("S1"))
+				.andExpect(jsonPath("$.status").value("PLANNED"));
+		send(get("/api/sprints?projectCode=" + project), member, null).andExpect(jsonPath("$.length()").value(1));
+	}
+
 	// ---------------------------------------------------------------- projects
 
 	@Test
@@ -251,7 +380,7 @@ class ProjectsAndSprintsApiIntegrationTest {
 		Caller owner = owner(tenant, 5);
 		Caller member = member(tenant, 5);
 		UUID project = newProject(member, "Doomed");
-		UUID sprint = newSprint(member, project, "S1", "2026-10-05");
+		UUID sprint = newSprint(owner, project, "S1", "2026-10-05");
 
 		send(delete("/api/projects/" + project), member, null).andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("FORBIDDEN"));
 		send(get("/api/projects/" + project), member, null).andExpect(status().isOk());

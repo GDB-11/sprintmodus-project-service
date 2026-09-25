@@ -63,7 +63,7 @@ class SprintUseCasesTest {
 	}
 
 	private com.sprintmodus.project_service.application.dto.Responses.SprintResponse created(LocalDate start) {
-		return create.execute(new CreateSprint(member, project, "Sprint", start, null)).getValue();
+		return create.execute(new CreateSprint(admin, project, "Sprint", start, null)).getValue();
 	}
 
 	// ------------------------------------------------------------------ create
@@ -92,7 +92,7 @@ class SprintUseCasesTest {
 
 	@Test
 	void withoutAStartDateItStartsOnTheNextConfiguredWeekday() {
-		var sprint = create.execute(new CreateSprint(member, project, "Sprint", null, null)).getValue();
+		var sprint = create.execute(new CreateSprint(admin, project, "Sprint", null, null)).getValue();
 
 		assertThat(sprint.startDate()).as("the next Monday after Wednesday 23 Sep").isEqualTo(day(9, 28));
 		assertThat(sprint.endDate()).isEqualTo(day(10, 12));
@@ -102,18 +102,18 @@ class SprintUseCasesTest {
 	void theConfiguredStartDayDrivesTheDefaultStart() {
 		configs.config = new SprintConfig(14, DayOfWeek.FRIDAY, true);
 
-		assertThat(create.execute(new CreateSprint(member, project, "S", null, null)).getValue().startDate()).isEqualTo(day(9, 25));
+		assertThat(create.execute(new CreateSprint(admin, project, "S", null, null)).getValue().startDate()).isEqualTo(day(9, 25));
 	}
 
 	@Test
 	void backToBackSprintsAreAllowedButOverlappingOnesAreNot() {
 		created(day(10, 5));
 
-		assertThat(create.execute(new CreateSprint(member, project, "Next", day(10, 19), null)).isSuccess()).as("starts the day the first ends").isTrue();
-		assertThat(create.execute(new CreateSprint(member, project, "Clash", day(10, 18), null)).getError()).isInstanceOf(SprintError.SprintOverlap.class);
-		assertThat(create.execute(new CreateSprint(member, project, "Inside", day(10, 10), null)).getError()).isInstanceOf(SprintError.SprintOverlap.class);
-		assertThat(create.execute(new CreateSprint(member, project, "Before", day(9, 30), null)).getError()).as("would run into the first").isInstanceOf(SprintError.SprintOverlap.class);
-		assertThat(create.execute(new CreateSprint(member, project, "Earlier", day(9, 21), null)).isSuccess()).as("ends the day the first starts").isTrue();
+		assertThat(create.execute(new CreateSprint(admin, project, "Next", day(10, 19), null)).isSuccess()).as("starts the day the first ends").isTrue();
+		assertThat(create.execute(new CreateSprint(admin, project, "Clash", day(10, 18), null)).getError()).isInstanceOf(SprintError.SprintOverlap.class);
+		assertThat(create.execute(new CreateSprint(admin, project, "Inside", day(10, 10), null)).getError()).isInstanceOf(SprintError.SprintOverlap.class);
+		assertThat(create.execute(new CreateSprint(admin, project, "Before", day(9, 30), null)).getError()).as("would run into the first").isInstanceOf(SprintError.SprintOverlap.class);
+		assertThat(create.execute(new CreateSprint(admin, project, "Earlier", day(9, 21), null)).isSuccess()).as("ends the day the first starts").isTrue();
 	}
 
 	@Test
@@ -121,22 +121,22 @@ class SprintUseCasesTest {
 		created(day(10, 5));
 		UUID other = sprints.addProject();
 
-		assertThat(create.execute(new CreateSprint(member, other, "Same dates", day(10, 5), null)).isSuccess()).isTrue();
+		assertThat(create.execute(new CreateSprint(admin, other, "Same dates", day(10, 5), null)).isSuccess()).isTrue();
 	}
 
 	@Test
 	void rejectsAnUnknownProject() {
-		assertThat(create.execute(new CreateSprint(member, UUID.randomUUID(), "S", day(10, 5), null)).getError())
+		assertThat(create.execute(new CreateSprint(admin, UUID.randomUUID(), "S", day(10, 5), null)).getError())
 				.isInstanceOf(SprintError.ProjectNotFound.class);
 	}
 
 	@Test
 	void validatesTheInput() {
-		assertThat(create.execute(new CreateSprint(member, null, "S", null, null)).getError()).isInstanceOf(SprintError.InvalidSprintData.class);
-		assertThat(create.execute(new CreateSprint(member, project, "  ", null, null)).getError()).isInstanceOf(SprintError.InvalidSprintData.class);
-		assertThat(create.execute(new CreateSprint(member, project, "x".repeat(256), null, null)).getError()).isInstanceOf(SprintError.InvalidSprintData.class);
-		assertThat(create.execute(new CreateSprint(member, project, "S", null, -1)).getError()).isInstanceOf(SprintError.InvalidSprintData.class);
-		assertThat(create.execute(new CreateSprint(member, project, "S", day(10, 5), 30)).getValue().plannedVelocity()).isEqualTo(30);
+		assertThat(create.execute(new CreateSprint(admin, null, "S", null, null)).getError()).isInstanceOf(SprintError.InvalidSprintData.class);
+		assertThat(create.execute(new CreateSprint(admin, project, "  ", null, null)).getError()).isInstanceOf(SprintError.InvalidSprintData.class);
+		assertThat(create.execute(new CreateSprint(admin, project, "x".repeat(256), null, null)).getError()).isInstanceOf(SprintError.InvalidSprintData.class);
+		assertThat(create.execute(new CreateSprint(admin, project, "S", null, -1)).getError()).isInstanceOf(SprintError.InvalidSprintData.class);
+		assertThat(create.execute(new CreateSprint(admin, project, "S", day(10, 5), 30)).getValue().plannedVelocity()).isEqualTo(30);
 		assertThat(sprints.stored).hasSize(1);
 	}
 
@@ -146,7 +146,7 @@ class SprintUseCasesTest {
 	void renamingAndReplanningKeepTheDates() {
 		var sprint = created(day(10, 5));
 
-		var updated = new UpdateSprintUseCase(sprints).execute(new UpdateSprint(sprint.code(), " Renamed ", null, 21)).getValue();
+		var updated = new UpdateSprintUseCase(sprints).execute(new UpdateSprint(admin, sprint.code(), " Renamed ", null, 21)).getValue();
 
 		assertThat(updated.name()).isEqualTo("Renamed");
 		assertThat(updated.plannedVelocity()).isEqualTo(21);
@@ -159,7 +159,7 @@ class SprintUseCasesTest {
 		var sprint = created(day(10, 5));
 		configs.config = new SprintConfig(7, DayOfWeek.MONDAY, true);
 
-		var moved = new UpdateSprintUseCase(sprints).execute(new UpdateSprint(sprint.code(), "S", day(10, 12), null)).getValue();
+		var moved = new UpdateSprintUseCase(sprints).execute(new UpdateSprint(admin, sprint.code(), "S", day(10, 12), null)).getValue();
 
 		assertThat(moved.startDate()).isEqualTo(day(10, 12));
 		assertThat(moved.endDate()).as("still 14 days").isEqualTo(day(10, 26));
@@ -171,28 +171,28 @@ class SprintUseCasesTest {
 		created(day(10, 19));
 		var update = new UpdateSprintUseCase(sprints);
 
-		assertThat(update.execute(new UpdateSprint(first.code(), "S", day(10, 10), null)).getError()).isInstanceOf(SprintError.SprintOverlap.class);
-		assertThat(update.execute(new UpdateSprint(first.code(), "S", day(10, 6), null)).getError()).as("would run into the second").isInstanceOf(SprintError.SprintOverlap.class);
-		assertThat(update.execute(new UpdateSprint(first.code(), "S", day(10, 4), null)).isSuccess()).as("moving within its own old range").isTrue();
+		assertThat(update.execute(new UpdateSprint(admin, first.code(), "S", day(10, 10), null)).getError()).isInstanceOf(SprintError.SprintOverlap.class);
+		assertThat(update.execute(new UpdateSprint(admin, first.code(), "S", day(10, 6), null)).getError()).as("would run into the second").isInstanceOf(SprintError.SprintOverlap.class);
+		assertThat(update.execute(new UpdateSprint(admin, first.code(), "S", day(10, 4), null)).isSuccess()).as("moving within its own old range").isTrue();
 	}
 
 	@Test
 	void datesOnlyChangeBeforeTheSprintStarts() {
 		var sprint = created(day(10, 5));
-		new StartSprintUseCase(sprints).execute(sprint.code());
+		new StartSprintUseCase(sprints).execute(admin, sprint.code());
 		var update = new UpdateSprintUseCase(sprints);
 
-		assertThat(update.execute(new UpdateSprint(sprint.code(), "S", day(10, 12), null)).getError()).isInstanceOf(SprintError.InvalidSprintState.class);
-		assertThat(update.execute(new UpdateSprint(sprint.code(), "Renamed", day(10, 5), 40)).isSuccess()).as("same date is not a move").isTrue();
+		assertThat(update.execute(new UpdateSprint(admin, sprint.code(), "S", day(10, 12), null)).getError()).isInstanceOf(SprintError.InvalidSprintState.class);
+		assertThat(update.execute(new UpdateSprint(admin, sprint.code(), "Renamed", day(10, 5), 40)).isSuccess()).as("same date is not a move").isTrue();
 	}
 
 	@Test
 	void aClosedSprintCannotBeChanged() {
 		var sprint = created(day(10, 5));
-		new StartSprintUseCase(sprints).execute(sprint.code());
-		new CloseSprintUseCase(sprints).execute(sprint.code());
+		new StartSprintUseCase(sprints).execute(admin, sprint.code());
+		new CloseSprintUseCase(sprints).execute(admin, sprint.code());
 
-		assertThat(new UpdateSprintUseCase(sprints).execute(new UpdateSprint(sprint.code(), "New name", null, null)).getError())
+		assertThat(new UpdateSprintUseCase(sprints).execute(new UpdateSprint(admin, sprint.code(), "New name", null, null)).getError())
 				.isInstanceOf(SprintError.InvalidSprintState.class);
 	}
 
@@ -201,9 +201,9 @@ class SprintUseCasesTest {
 		var update = new UpdateSprintUseCase(sprints);
 		var sprint = created(day(10, 5));
 
-		assertThat(update.execute(new UpdateSprint(UUID.randomUUID(), "S", null, null)).getError()).isInstanceOf(SprintError.SprintNotFound.class);
-		assertThat(update.execute(new UpdateSprint(sprint.code(), " ", null, null)).getError()).isInstanceOf(SprintError.InvalidSprintData.class);
-		assertThat(update.execute(new UpdateSprint(sprint.code(), "S", null, -5)).getError()).isInstanceOf(SprintError.InvalidSprintData.class);
+		assertThat(update.execute(new UpdateSprint(admin, UUID.randomUUID(), "S", null, null)).getError()).isInstanceOf(SprintError.SprintNotFound.class);
+		assertThat(update.execute(new UpdateSprint(admin, sprint.code(), " ", null, null)).getError()).isInstanceOf(SprintError.InvalidSprintData.class);
+		assertThat(update.execute(new UpdateSprint(admin, sprint.code(), "S", null, -5)).getError()).isInstanceOf(SprintError.InvalidSprintData.class);
 	}
 
 	// ------------------------------------------------------------------ lifecycle
@@ -214,13 +214,13 @@ class SprintUseCasesTest {
 		var start = new StartSprintUseCase(sprints);
 		var close = new CloseSprintUseCase(sprints);
 
-		assertThat(close.execute(sprint.code()).getError()).as("cannot close a planned sprint").isInstanceOf(SprintError.InvalidSprintState.class);
-		assertThat(start.execute(sprint.code()).getValue().status()).isEqualTo(SprintStatus.ACTIVE);
-		assertThat(start.execute(sprint.code()).getError()).as("already started").isInstanceOf(SprintError.InvalidSprintState.class);
-		assertThat(close.execute(sprint.code()).isSuccess()).isTrue();
+		assertThat(close.execute(admin, sprint.code()).getError()).as("cannot close a planned sprint").isInstanceOf(SprintError.InvalidSprintState.class);
+		assertThat(start.execute(admin, sprint.code()).getValue().status()).isEqualTo(SprintStatus.ACTIVE);
+		assertThat(start.execute(admin, sprint.code()).getError()).as("already started").isInstanceOf(SprintError.InvalidSprintState.class);
+		assertThat(close.execute(admin, sprint.code()).isSuccess()).isTrue();
 		assertThat(sprints.findByCode(sprint.code()).orElseThrow().status()).isEqualTo(SprintStatus.CLOSED);
-		assertThat(close.execute(sprint.code()).getError()).as("already closed").isInstanceOf(SprintError.InvalidSprintState.class);
-		assertThat(start.execute(sprint.code()).getError()).isInstanceOf(SprintError.InvalidSprintState.class);
+		assertThat(close.execute(admin, sprint.code()).getError()).as("already closed").isInstanceOf(SprintError.InvalidSprintState.class);
+		assertThat(start.execute(admin, sprint.code()).getError()).isInstanceOf(SprintError.InvalidSprintState.class);
 	}
 
 	@Test
@@ -228,31 +228,31 @@ class SprintUseCasesTest {
 		var first = created(day(10, 5));
 		var second = created(day(10, 19));
 		var start = new StartSprintUseCase(sprints);
-		start.execute(first.code());
+		start.execute(admin, first.code());
 
-		assertThat(start.execute(second.code()).getError()).isInstanceOf(SprintError.AnotherSprintActive.class);
+		assertThat(start.execute(admin, second.code()).getError()).isInstanceOf(SprintError.AnotherSprintActive.class);
 
-		new CloseSprintUseCase(sprints).execute(first.code());
-		assertThat(start.execute(second.code()).isSuccess()).as("once the first is closed").isTrue();
+		new CloseSprintUseCase(sprints).execute(admin, first.code());
+		assertThat(start.execute(admin, second.code()).isSuccess()).as("once the first is closed").isTrue();
 	}
 
 	@Test
 	void differentProjectsCanEachHaveAnActiveSprint() {
 		var a = created(day(10, 5));
 		UUID other = sprints.addProject();
-		var b = create.execute(new CreateSprint(member, other, "B", day(10, 5), null)).getValue();
+		var b = create.execute(new CreateSprint(admin, other, "B", day(10, 5), null)).getValue();
 		var start = new StartSprintUseCase(sprints);
 
-		assertThat(start.execute(a.code()).isSuccess()).isTrue();
-		assertThat(start.execute(b.code()).isSuccess()).isTrue();
+		assertThat(start.execute(admin, a.code()).isSuccess()).isTrue();
+		assertThat(start.execute(admin, b.code()).isSuccess()).isTrue();
 	}
 
 	@Test
 	void unknownSprintsAreNotFound() {
 		UUID nobody = UUID.randomUUID();
 
-		assertThat(new StartSprintUseCase(sprints).execute(nobody).getError()).isInstanceOf(SprintError.SprintNotFound.class);
-		assertThat(new CloseSprintUseCase(sprints).execute(nobody).getError()).isInstanceOf(SprintError.SprintNotFound.class);
+		assertThat(new StartSprintUseCase(sprints).execute(admin, nobody).getError()).isInstanceOf(SprintError.SprintNotFound.class);
+		assertThat(new CloseSprintUseCase(sprints).execute(admin, nobody).getError()).isInstanceOf(SprintError.SprintNotFound.class);
 		assertThat(new GetSprintUseCase(sprints).execute(nobody).getError()).isInstanceOf(SprintError.SprintNotFound.class);
 		assertThat(new GetSprintVelocityUseCase(sprints, configs).execute(nobody).getError()).isInstanceOf(SprintError.SprintNotFound.class);
 		assertThat(new UpdateSprintVelocityUseCase(sprints, configs).execute(nobody, 5).getError()).isInstanceOf(SprintError.SprintNotFound.class);
@@ -279,7 +279,7 @@ class SprintUseCasesTest {
 	@Test
 	void recordsTheVelocityWorkitemServiceReports() {
 		var sprint = created(day(10, 5));
-		new StartSprintUseCase(sprints).execute(sprint.code());
+		new StartSprintUseCase(sprints).execute(admin, sprint.code());
 		var update = new UpdateSprintVelocityUseCase(sprints, configs);
 
 		assertThat(update.execute(sprint.code(), 13).isSuccess()).isTrue();
@@ -291,9 +291,9 @@ class SprintUseCasesTest {
 	@Test
 	void theVelocityOfAClosedSprintIsFrozen() {
 		var sprint = created(day(10, 5));
-		new StartSprintUseCase(sprints).execute(sprint.code());
+		new StartSprintUseCase(sprints).execute(admin, sprint.code());
 		new UpdateSprintVelocityUseCase(sprints, configs).execute(sprint.code(), 13);
-		new CloseSprintUseCase(sprints).execute(sprint.code());
+		new CloseSprintUseCase(sprints).execute(admin, sprint.code());
 
 		assertThat(new UpdateSprintVelocityUseCase(sprints, configs).execute(sprint.code(), 99).getError())
 				.isInstanceOf(SprintError.InvalidSprintState.class);

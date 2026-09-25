@@ -10,6 +10,7 @@ import com.sprintmodus.project_service.application.dto.Commands.CreateSprint;
 import com.sprintmodus.project_service.application.dto.Responses.SprintResponse;
 import com.sprintmodus.project_service.application.error.SprintError;
 import com.sprintmodus.project_service.application.error.SprintError.InvalidSprintData;
+import com.sprintmodus.project_service.application.error.SprintError.NotAllowed;
 import com.sprintmodus.project_service.application.port.persistence.SprintConfigRepository;
 import com.sprintmodus.project_service.application.port.persistence.SprintRepository;
 import com.sprintmodus.project_service.application.port.persistence.SprintRepository.NewSprint;
@@ -17,7 +18,7 @@ import com.sprintmodus.project_service.domain.model.SprintConfig;
 import com.sprintmodus.project_service.domain.service.SprintSchedule;
 
 /**
- * Creates a sprint whose length is the tenant's configured one: {@code endDate = startDate + defaultSprintDays}. Without
+ * Creates a sprint (owners and admins only) whose length is the tenant's configured one: {@code endDate = startDate + defaultSprintDays}. Without
  * a start date the first configured start day (today or later) is used. Sprints of a project must not overlap; the
  * repository checks that atomically with the insert.
  */
@@ -41,6 +42,9 @@ public class CreateSprintUseCase {
 	}
 
 	public Result<SprintResponse, SprintError> execute(CreateSprint command) {
+		if (!command.actor().canAdminister()) {
+			return Result.failure(new NotAllowed());
+		}
 		if (command.projectCode() == null) {
 			return Result.failure(new InvalidSprintData("projectCode", "Choose the project of the sprint."));
 		}

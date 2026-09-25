@@ -23,9 +23,11 @@ import com.sprintmodus.project_service.application.dto.Commands.UpdateSprintConf
 import com.sprintmodus.project_service.application.error.SprintError.InvalidSprintData;
 import com.sprintmodus.project_service.application.service.CloseSprintUseCase;
 import com.sprintmodus.project_service.application.service.CreateSprintUseCase;
+import com.sprintmodus.project_service.application.service.GetSprintBurndownUseCase;
 import com.sprintmodus.project_service.application.service.GetSprintConfigUseCase;
 import com.sprintmodus.project_service.application.service.GetSprintUseCase;
 import com.sprintmodus.project_service.application.service.GetSprintVelocityUseCase;
+import com.sprintmodus.project_service.application.service.GetVelocityHistoryUseCase;
 import com.sprintmodus.project_service.application.service.ListSprintsUseCase;
 import com.sprintmodus.project_service.application.service.StartSprintUseCase;
 import com.sprintmodus.project_service.application.service.UpdateSprintConfigUseCase;
@@ -56,14 +58,18 @@ class SprintController {
 
 	private final UpdateSprintVelocityUseCase updateVelocity;
 
+	private final GetSprintBurndownUseCase getBurndown;
+
+	private final GetVelocityHistoryUseCase getVelocityHistory;
+
 	private final GetSprintConfigUseCase getConfig;
 
 	private final UpdateSprintConfigUseCase updateConfig;
 
 	SprintController(CreateSprintUseCase createSprint, ListSprintsUseCase listSprints, GetSprintUseCase getSprint,
 			UpdateSprintUseCase updateSprint, StartSprintUseCase startSprint, CloseSprintUseCase closeSprint,
-			GetSprintVelocityUseCase getVelocity, UpdateSprintVelocityUseCase updateVelocity, GetSprintConfigUseCase getConfig,
-			UpdateSprintConfigUseCase updateConfig) {
+			GetSprintVelocityUseCase getVelocity, UpdateSprintVelocityUseCase updateVelocity, GetSprintBurndownUseCase getBurndown,
+			GetVelocityHistoryUseCase getVelocityHistory, GetSprintConfigUseCase getConfig, UpdateSprintConfigUseCase updateConfig) {
 		this.createSprint = createSprint;
 		this.listSprints = listSprints;
 		this.getSprint = getSprint;
@@ -72,6 +78,8 @@ class SprintController {
 		this.closeSprint = closeSprint;
 		this.getVelocity = getVelocity;
 		this.updateVelocity = updateVelocity;
+		this.getBurndown = getBurndown;
+		this.getVelocityHistory = getVelocityHistory;
 		this.getConfig = getConfig;
 		this.updateConfig = updateConfig;
 	}
@@ -95,19 +103,20 @@ class SprintController {
 	}
 
 	@PutMapping("/{sprintCode}")
-	ResponseEntity<?> update(@PathVariable UUID sprintCode, @RequestBody Requests.UpdateSprint request) {
-		return updateSprint.execute(new UpdateSprint(sprintCode, request.name(), request.startDate(), request.plannedVelocity()))
+	ResponseEntity<?> update(@AuthenticationPrincipal AuthenticatedUser user, @PathVariable UUID sprintCode,
+			@RequestBody Requests.UpdateSprint request) {
+		return updateSprint.execute(new UpdateSprint(Actors.from(user), sprintCode, request.name(), request.startDate(), request.plannedVelocity()))
 				.fold(sprint -> ResponseEntity.ok(Responses.Sprint.from(sprint)), ErrorMapper::toResponse);
 	}
 
 	@PostMapping("/{sprintCode}/start")
-	ResponseEntity<?> start(@PathVariable UUID sprintCode) {
-		return startSprint.execute(sprintCode).fold(sprint -> ResponseEntity.ok(Responses.Sprint.from(sprint)), ErrorMapper::toResponse);
+	ResponseEntity<?> start(@AuthenticationPrincipal AuthenticatedUser user, @PathVariable UUID sprintCode) {
+		return startSprint.execute(Actors.from(user), sprintCode).fold(sprint -> ResponseEntity.ok(Responses.Sprint.from(sprint)), ErrorMapper::toResponse);
 	}
 
 	@PostMapping("/{sprintCode}/close")
-	ResponseEntity<?> close(@PathVariable UUID sprintCode) {
-		return closeSprint.execute(sprintCode).fold(_ -> ResponseEntity.noContent().build(), ErrorMapper::toResponse);
+	ResponseEntity<?> close(@AuthenticationPrincipal AuthenticatedUser user, @PathVariable UUID sprintCode) {
+		return closeSprint.execute(Actors.from(user), sprintCode).fold(_ -> ResponseEntity.noContent().build(), ErrorMapper::toResponse);
 	}
 
 	@GetMapping("/{sprintCode}/velocity")
@@ -123,6 +132,19 @@ class SprintController {
 			return ErrorMapper.toResponse(new InvalidSprintData("velocity", "The velocity is required."));
 		}
 		return updateVelocity.execute(sprintCode, request.velocity()).fold(_ -> ResponseEntity.noContent().build(),
+				ErrorMapper::toResponse);
+	}
+
+	/** The hours still to do at the end of each day of the sprint, next to the ideal line; see {@code Responses.Burndown}. */
+	@GetMapping("/{sprintCode}/burndown")
+	ResponseEntity<?> burndown(@PathVariable UUID sprintCode) {
+		return getBurndown.execute(sprintCode).fold(burndown -> ResponseEntity.ok(Responses.Burndown.from(burndown)), ErrorMapper::toResponse);
+	}
+
+	/** The velocity of a project's last {@code limit} closed sprints (default 6, at most 24), oldest first, and their average. */
+	@GetMapping("/velocity-history")
+	ResponseEntity<?> velocityHistory(@RequestParam UUID projectCode, @RequestParam(required = false) Integer limit) {
+		return getVelocityHistory.execute(projectCode, limit).fold(history -> ResponseEntity.ok(Responses.VelocityHistory.from(history)),
 				ErrorMapper::toResponse);
 	}
 

@@ -47,6 +47,7 @@ final class ErrorMapper {
 			case SprintError.InvalidSprintData _ -> HttpStatus.BAD_REQUEST;
 			case SprintError.ProjectNotFound _, SprintError.SprintNotFound _ -> HttpStatus.NOT_FOUND;
 			case SprintError.SprintOverlap _, SprintError.InvalidSprintState _, SprintError.AnotherSprintActive _ -> HttpStatus.CONFLICT;
+			case SprintError.NotAllowed _ -> HttpStatus.FORBIDDEN;
 		};
 	}
 

@@ -18,10 +18,12 @@ Ids in URLs and JSON are UUID codes (`projectCode`, `sprintCode`); internal data
 | DELETE | `/api/projects/{projectCode}` | Soft delete (with its sprints), `204`. Owners and admins only. Frees the plan slot, the key stays reserved |
 | GET | `/api/projects/{projectCode}/members` | Active members (the creator joins automatically) |
 | GET | `/api/sprints?projectCode=` | A project's sprints, by start date |
-| POST | `/api/sprints` | `{projectCode, name, startDate?, plannedVelocity?}` → `201`. `endDate = startDate + the tenant's configured days`. Without `startDate`: the next configured start weekday. `409 SPRINT_OVERLAP` |
+| POST | `/api/sprints` | Owners/admins only (`403 FORBIDDEN` otherwise, like every write to a sprint below). `{projectCode, name, startDate?, plannedVelocity?}` → `201`. `endDate = startDate + the tenant's configured days`. Without `startDate`: the next configured start weekday. `409 SPRINT_OVERLAP` |
 | GET / PUT | `/api/sprints/{sprintCode}` | PUT `{name, startDate?, plannedVelocity?}`; dates only while PLANNED (the sprint keeps its own length); a closed sprint cannot change |
-| POST | `/api/sprints/{sprintCode}/start` | PLANNED → ACTIVE; `409 ANOTHER_SPRINT_ACTIVE` if the project already has one |
-| POST | `/api/sprints/{sprintCode}/close` | ACTIVE → CLOSED, `204` |
+| POST | `/api/sprints/{sprintCode}/start` | PLANNED → ACTIVE; `409 ANOTHER_SPRINT_ACTIVE` if the project already has one. Begins the burndown: records day 0 (the hours in the sprint on the eve of its first day) and today's point, in the same transaction |
+| POST | `/api/sprints/{sprintCode}/close` | ACTIVE → CLOSED, `204`. Takes the burndown's last snapshot first, in the same transaction; from then on velocity and burndown never change |
+| GET | `/api/sprints/{sprintCode}/burndown` | `{sprintCode, sprintName, status, startDate, endDate, days, baselineHours, points: [{day, date, idealRemainingHours, remainingHours}]}`. Day 0 is the eve of the first day (the starting scope); days `1..days` are the sprint's own. `remainingHours` is `null` for a day that has not happened (or, in a closed sprint, came after it closed); a day nobody touched carries the last value forward. The ideal falls linearly from day 0 to 0 on the last day. Any member may read it |
+| GET | `/api/sprints/velocity-history?projectCode=&limit=` | The last `limit` (default 6, 1-24) CLOSED sprints of the project, oldest first, and their `averageVelocity` (one decimal); only closed sprints count because only their velocity is final |
 | GET | `/api/sprints/{sprintCode}/velocity` | Recorded velocity next to what the items add up to (`view_Sprint_Overview`) |
 | PUT | `/api/sprints/{sprintCode}/velocity` | `{velocity}`, `204`. Called by workitem-service with the caller's own token. `409` once the sprint is closed (frozen); succeeds without recording when velocity tracking is off |
 | GET / PUT | `/api/sprints/config` | `{defaultSprintDays (1-90), sprintStartDay, velocityTrackingEnabled}`; PUT for owners and admins only. Affects sprints created afterwards |
@@ -31,6 +33,8 @@ found (also for another tenant's ids), 409 conflict.
 
 ## Rules worth knowing
 
+- **Planning sprints is for owners and admins** (creating, changing, starting, closing; decided 2026-09-24 with Phase 10, matching workitem-service's rule for moving items between sprints). Reading is for every member.
+- **The burndown is recorded as it happens** (there is no daily job: the services have no list of tenants). `BurndownData` rows are written by the statement `INSERT ... SELECT ... FROM SprintBurndownToday ON DUPLICATE KEY UPDATE` (view of tenant migration V1.11): this service on start and close, workitem-service after every change to a sprint's remaining hours. The last write of a day is that day's end-of-day value. *Remaining hours* = the `RemainingHours` of the sprint's leaf items that are not in a terminal status (`SprintRemainingHours`), so a PBI and its Tasks are never counted twice. Only ACTIVE sprints have a snapshot view, so a planned sprint has no burndown and a closed sprint's is locked.
 - **Sprints are half-open** `[startDate, endDate)`, so back-to-back sprints do not overlap. A project has at most one active sprint.
 - **Concurrency-safe limits.** Creating a project counts and inserts in one transaction that first locks the tenant's
   singleton `TenantSprintConfig` row; sprint changes lock the project's row. Parallel requests cannot exceed the plan or

@@ -6,13 +6,18 @@ import org.springframework.stereotype.Service;
 
 import com.sprintmodus.common_lib.result.Result;
 import com.sprintmodus.common_lib.result.Unit;
+import com.sprintmodus.project_service.application.dto.Actor;
 import com.sprintmodus.project_service.application.error.SprintError;
+import com.sprintmodus.project_service.application.error.SprintError.NotAllowed;
 import com.sprintmodus.project_service.application.error.SprintError.InvalidSprintState;
 import com.sprintmodus.project_service.application.error.SprintError.SprintNotFound;
 import com.sprintmodus.project_service.application.port.persistence.SprintRepository;
 import com.sprintmodus.project_service.domain.model.SprintStatus;
 
-/** Closes an active sprint. Its velocity stays as last reported and is frozen from then on. */
+/**
+ * Closes an active sprint (owners and admins only). Its velocity stays as last reported and is frozen from then on, and so
+ * is its burndown: the repository takes the last snapshot in the same transaction that closes it.
+ */
 @Service
 public class CloseSprintUseCase {
 
@@ -22,7 +27,10 @@ public class CloseSprintUseCase {
 		this.sprints = sprints;
 	}
 
-	public Result<Unit, SprintError> execute(UUID sprintCode) {
+	public Result<Unit, SprintError> execute(Actor actor, UUID sprintCode) {
+		if (!actor.canAdminister()) {
+			return Result.failure(new NotAllowed());
+		}
 		var sprint = sprints.findByCode(sprintCode).orElse(null);
 		if (sprint == null) {
 			return Result.failure(new SprintNotFound());

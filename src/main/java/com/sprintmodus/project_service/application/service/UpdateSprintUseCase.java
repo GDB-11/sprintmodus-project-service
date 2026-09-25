@@ -8,6 +8,7 @@ import com.sprintmodus.project_service.application.dto.Responses.SprintResponse;
 import com.sprintmodus.project_service.application.error.SprintError;
 import com.sprintmodus.project_service.application.error.SprintError.InvalidSprintData;
 import com.sprintmodus.project_service.application.error.SprintError.InvalidSprintState;
+import com.sprintmodus.project_service.application.error.SprintError.NotAllowed;
 import com.sprintmodus.project_service.application.error.SprintError.SprintNotFound;
 import com.sprintmodus.project_service.application.port.persistence.SprintRepository;
 import com.sprintmodus.project_service.application.port.persistence.SprintRepository.SprintChanges;
@@ -16,7 +17,7 @@ import com.sprintmodus.project_service.domain.model.SprintStatus;
 import com.sprintmodus.project_service.domain.service.SprintSchedule;
 
 /**
- * Renames a sprint, changes its planned velocity, or moves it. Moving keeps the sprint's own length
+ * Renames a sprint (owners and admins only), changes its planned velocity, or moves it. Moving keeps the sprint's own length
  * ({@code configuredDays}), so the end date follows, and is only possible before the sprint starts. A closed sprint is
  * history and cannot be changed.
  */
@@ -30,6 +31,9 @@ public class UpdateSprintUseCase {
 	}
 
 	public Result<SprintResponse, SprintError> execute(UpdateSprint command) {
+		if (!command.actor().canAdminister()) {
+			return Result.failure(new NotAllowed());
+		}
 		String name = command.name() == null ? "" : command.name().trim();
 		if (name.isEmpty() || name.length() > CreateSprintUseCase.MAX_NAME_LENGTH) {
 			return Result.failure(new InvalidSprintData("name",

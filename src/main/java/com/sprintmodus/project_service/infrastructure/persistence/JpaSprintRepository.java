@@ -114,13 +114,21 @@ class JpaSprintRepository implements SprintRepository {
 				return Result.failure(Rejection.ANOTHER_ACTIVE);
 			}
 			sprints.start(sprintCode.toString());
+			// the burndown begins: day 0 is the scope now, and today already has its point
+			sprints.insertBurndownBaseline(sprintCode.toString());
+			sprints.snapshotBurndown(sprintCode.toString());
 			return Result.success(findByCode(sprintCode).orElseThrow());
 		});
 	}
 
 	@Override
 	public boolean close(UUID sprintCode) {
-		return transaction.execute(_ -> sprints.close(sprintCode.toString()) > 0);
+		// The last snapshot is taken before the status changes (only an active sprint has one) and in the same transaction, so
+		// a closed sprint's burndown is exactly what it was when it closed and is never written again
+		return transaction.execute(_ -> {
+			sprints.snapshotBurndown(sprintCode.toString());
+			return sprints.close(sprintCode.toString()) > 0;
+		});
 	}
 
 	@Override
